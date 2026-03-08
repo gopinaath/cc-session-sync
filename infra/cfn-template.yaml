@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CC Session Sync PoC — Two EC2 Ubuntu instances (Machine A + Machine B)
+  with Bedrock access for Claude Code session portability testing.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 key pair for SSH access
+  AllowedSSHCidr:
+    Type: String
+    Description: CIDR block allowed to SSH (e.g. your IP as x.x.x.x/32)
+    AllowedPattern: '(\d{1,3}\.){3}\d{1,3}/\d{1,2}'
+  LatestUbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Latest Ubuntu 24.04 AMI from SSM parameter store
+
+Resources:
+  # --- IAM ---
+  BedrockAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-bedrock-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: 'arn:aws:bedrock:*::foundation-model/*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BedrockAccessRole
+
+  # --- Networking ---
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH from caller IP
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSSHCidr
+
+  # --- EC2 Instances ---
+  MachineA:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestUbuntuAmi
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !GetAtt SSHSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-machine-a'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/user-data.log 2>&1
+
+          # System packages
+          apt-get update
+          apt-get install -y jq git unzip curl
+
+          # GitHub CLI
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          apt-get update
+          apt-get install -y gh
+
+          # Node.js 20 via NodeSource
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+
+          # Claude Code environment variables
+          cat > /etc/profile.d/claude-env.sh << 'ENVEOF'
+          export CLAUDE_CODE_USE_BEDROCK=1
+          export AWS_REGION=us-east-1
+          export ENABLE_TOOL_SEARCH=true
+          export DISABLE_ERROR_REPORTING=1
+          export DISABLE_TELEMETRY=1
+          export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+          export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+          export ANTHROPIC_DEFAULT_HAIKU_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0
+          export ANTHROPIC_DEFAULT_OPUS_MODEL=global.anthropic.claude-opus-4-6-v1
+          export ANTHROPIC_DEFAULT_SONNET_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0
+          ENVEOF
+          chmod 644 /etc/profile.d/claude-env.sh
+
+          # Signal completion
+          touch /tmp/user-data-complete
+
+  MachineB:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestUbuntuAmi
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !GetAtt SSHSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-machine-b'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/user-data.log 2>&1
+
+          # System packages
+          apt-get update
+          apt-get install -y jq git unzip curl
+
+          # GitHub CLI
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          apt-get update
+          apt-get install -y gh
+
+          # Node.js 20 via NodeSource
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+
+          # Claude Code environment variables
+          cat > /etc/profile.d/claude-env.sh << 'ENVEOF'
+          export CLAUDE_CODE_USE_BEDROCK=1
+          export AWS_REGION=us-east-1
+          export ENABLE_TOOL_SEARCH=true
+          export DISABLE_ERROR_REPORTING=1
+          export DISABLE_TELEMETRY=1
+          export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+          export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+          export ANTHROPIC_DEFAULT_HAIKU_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0
+          export ANTHROPIC_DEFAULT_OPUS_MODEL=global.anthropic.claude-opus-4-6-v1
+          export ANTHROPIC_DEFAULT_SONNET_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0
+          ENVEOF
+          chmod 644 /etc/profile.d/claude-env.sh
+
+          # Signal completion
+          touch /tmp/user-data-complete
+
+Outputs:
+  MachineAPublicIp:
+    Description: Public IP of Machine A
+    Value: !GetAtt MachineA.PublicIp
+  MachineBPublicIp:
+    Description: Public IP of Machine B
+    Value: !GetAtt MachineB.PublicIp
+  SSHCommandMachineA:
+    Description: SSH command for Machine A
+    Value: !Sub 'ssh -i ${KeyName}.pem ubuntu@${MachineA.PublicIp}'
+  SSHCommandMachineB:
+    Description: SSH command for Machine B
+    Value: !Sub 'ssh -i ${KeyName}.pem ubuntu@${MachineB.PublicIp}'
