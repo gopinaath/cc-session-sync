@@ -33,9 +33,8 @@ die()  { echo "[cc-push] ERROR: $*" >&2; exit 1; }
 PROJECT_DIR="$(cd "${PROJECT_DIR}" && pwd)"
 
 # Encode the project path the same way Claude Code does: replace / with -
+# NOTE: Claude Code keeps the leading dash (e.g. /home/ubuntu/project → -home-ubuntu-project)
 ENCODED_PATH="${PROJECT_DIR//\//-}"
-# Strip leading dash
-ENCODED_PATH="${ENCODED_PATH#-}"
 
 SESSION_DIR="${CLAUDE_DIR}/projects/${ENCODED_PATH}"
 SESSION_INDEX="${SESSION_DIR}/sessions-index.json"
@@ -47,8 +46,8 @@ log "Encoded path      : ${ENCODED_PATH}"
 log "Session index     : ${SESSION_INDEX}"
 
 # ---------- read session info ----------
-SESSION_COUNT=$(jq 'length' "${SESSION_INDEX}")
-LATEST_SESSION=$(jq -r '.[-1].sessionId // .[-1].id // empty' "${SESSION_INDEX}")
+SESSION_COUNT=$(jq '.entries | length' "${SESSION_INDEX}")
+LATEST_SESSION=$(jq -r '.entries[-1].sessionId // empty' "${SESSION_INDEX}")
 log "Sessions found    : ${SESSION_COUNT}"
 log "Latest session ID : ${LATEST_SESSION}"
 
@@ -102,7 +101,7 @@ for top_dir in file-history tasks todos; do
   SRC="${CLAUDE_DIR}/${top_dir}"
   [[ -d "${SRC}" ]] || continue
   # Copy directories that match any session ID in our index
-  jq -r '.[].sessionId // .[].id // empty' "${SESSION_INDEX}" | while read -r sid; do
+  jq -r '.entries[].sessionId // empty' "${SESSION_INDEX}" | while read -r sid; do
     if [[ -d "${SRC}/${sid}" ]]; then
       mkdir -p "${STAGING}/${top_dir}"
       cp -r "${SRC}/${sid}" "${STAGING}/${top_dir}/${sid}"
