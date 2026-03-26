@@ -148,11 +148,10 @@ if [[ "${NO_SCAN}" == false ]]; then
   log "=== Secret Scan ==="
 
   SECRETS_FOUND=false
-  USED_GITLEAKS=false
 
+  # --- gitleaks (if installed) ---
   if command -v gitleaks &>/dev/null; then
-    USED_GITLEAKS=true
-    log "Using gitleaks for secret detection..."
+    log "Running gitleaks..."
     GITLEAKS_REPORT=$(mktemp)
 
     # Try modern 'dir' subcommand (v8.19.0+), then older 'detect --no-git' (v8.16.x)
@@ -162,7 +161,6 @@ if [[ "${NO_SCAN}" == false ]]; then
       "${STAGING}" >/dev/null 2>&1 || GITLEAKS_RC=$?
 
     if [[ ${GITLEAKS_RC} -ne 0 && ${GITLEAKS_RC} -ne 2 ]]; then
-      # 'dir' subcommand not recognized — try older syntax
       GITLEAKS_RC=0
       gitleaks detect --no-git --redact --exit-code 2 \
         --report-format json --report-path "${GITLEAKS_REPORT}" \
@@ -171,58 +169,45 @@ if [[ "${NO_SCAN}" == false ]]; then
 
     if [[ ${GITLEAKS_RC} -eq 2 ]]; then
       SECRETS_FOUND=true
-      log "WARNING: Potential secrets found in staged files:"
+      log "WARNING: gitleaks found potential secrets:"
       jq -r '.[] | "\(.File):\(.StartLine): \(.RuleID) — \(.Description)"' "${GITLEAKS_REPORT}" \
         | sed "s|${STAGING}/||" | while IFS= read -r line; do
           log "  ${line}"
         done
-    elif [[ ${GITLEAKS_RC} -eq 0 ]]; then
-      log "No secrets detected."
-    else
-      log "WARNING: gitleaks failed (exit ${GITLEAKS_RC}); falling back to grep patterns..."
-      USED_GITLEAKS=false
+    elif [[ ${GITLEAKS_RC} -ne 0 ]]; then
+      log "WARNING: gitleaks failed (exit ${GITLEAKS_RC}), continuing with grep patterns..."
     fi
     rm -f "${GITLEAKS_REPORT}"
   fi
 
-  # Grep fallback (when gitleaks is not installed or crashed)
-  if [[ "${USED_GITLEAKS}" == false ]]; then
-    if ! command -v gitleaks &>/dev/null; then
-      log "gitleaks not found; using built-in grep patterns..."
-    fi
+  # --- grep patterns (always runs — catches token formats gitleaks misses) ---
+  SCAN_PATTERN='AKIA[0-9A-Z]{16}'
+  SCAN_PATTERN+='|ASIA[0-9A-Z]{16}'
+  SCAN_PATTERN+='|sk-[a-zA-Z0-9]{20,}'
+  SCAN_PATTERN+='|sk-ant-[a-zA-Z0-9-]{20,}'
+  SCAN_PATTERN+='|ghp_[A-Za-z0-9]{36}'
+  SCAN_PATTERN+='|gho_[A-Za-z0-9]{36}'
+  SCAN_PATTERN+='|ghs_[A-Za-z0-9]{36}'
+  SCAN_PATTERN+='|github_pat_[A-Za-z0-9_]{22,}'
+  SCAN_PATTERN+='|-----BEGIN.*PRIVATE KEY'
+  SCAN_PATTERN+='|xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24}'
+  SCAN_PATTERN+='|xoxp-[0-9]{10,}-[0-9]{10,}-'
+  SCAN_PATTERN+='|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 
-    # High-confidence patterns for real secrets
-    SCAN_PATTERN='AKIA[0-9A-Z]{16}'
-    SCAN_PATTERN+='|ASIA[0-9A-Z]{16}'
-    SCAN_PATTERN+='|sk-[a-zA-Z0-9]{20,}'
-    SCAN_PATTERN+='|sk-ant-[a-zA-Z0-9-]{20,}'
-    SCAN_PATTERN+='|ghp_[A-Za-z0-9]{36}'
-    SCAN_PATTERN+='|gho_[A-Za-z0-9]{36}'
-    SCAN_PATTERN+='|ghs_[A-Za-z0-9]{36}'
-    SCAN_PATTERN+='|github_pat_[A-Za-z0-9_]{22,}'
-    SCAN_PATTERN+='|-----BEGIN.*PRIVATE KEY'
-    SCAN_PATTERN+='|xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24}'
-    SCAN_PATTERN+='|xoxp-[0-9]{10,}-[0-9]{10,}-'
-    SCAN_PATTERN+='|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+  SCAN_RESULTS=$(grep -rEon "${SCAN_PATTERN}" "${STAGING}" 2>/dev/null || true)
 
-    # Scan staged files — use -o to show only matched text (JSONL lines can be huge)
-    SCAN_RESULTS=$(grep -rEon "${SCAN_PATTERN}" "${STAGING}" 2>/dev/null || true)
+  # Apply scanignore suppressions if the file exists
+  SCANIGNORE="${PROJECT_DIR}/.cc-push-scanignore"
+  if [[ -n "${SCAN_RESULTS}" && -f "${SCANIGNORE}" ]]; then
+    SCAN_RESULTS=$(echo "${SCAN_RESULTS}" | grep -vFf "${SCANIGNORE}" || true)
+  fi
 
-    # Apply scanignore suppressions if the file exists
-    SCANIGNORE="${PROJECT_DIR}/.cc-push-scanignore"
-    if [[ -n "${SCAN_RESULTS}" && -f "${SCANIGNORE}" ]]; then
-      SCAN_RESULTS=$(echo "${SCAN_RESULTS}" | grep -vFf "${SCANIGNORE}" || true)
-    fi
-
-    if [[ -n "${SCAN_RESULTS}" ]]; then
-      SECRETS_FOUND=true
-      log "WARNING: Potential secrets found in staged files:"
-      echo "${SCAN_RESULTS}" | sed "s|${STAGING}/||" | while IFS= read -r line; do
-        log "  ${line}"
-      done
-    else
-      log "No secrets detected."
-    fi
+  if [[ -n "${SCAN_RESULTS}" ]]; then
+    SECRETS_FOUND=true
+    log "WARNING: Potential secrets found by grep patterns:"
+    echo "${SCAN_RESULTS}" | sed "s|${STAGING}/||" | while IFS= read -r line; do
+      log "  ${line}"
+    done
   fi
 
   if [[ "${SECRETS_FOUND}" == true ]]; then
@@ -231,6 +216,8 @@ if [[ "${NO_SCAN}" == false ]]; then
     log "To push anyway:  cc-push.sh --no-scan <project-dir> <state-repo-url>"
     log "To suppress false positives: add patterns to .cc-push-scanignore"
     exit 1
+  else
+    log "No secrets detected."
   fi
 fi
 

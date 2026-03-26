@@ -108,10 +108,15 @@ Both sync scripts support `--dry-run` to preview what would be transferred:
 
 `cc-push.sh` scans staged files for secrets before pushing. Session JSONL files can capture credentials from tool output (e.g., `aws sts get-caller-identity`), `.env` reads, or user-pasted keys.
 
-If [gitleaks](https://github.com/gitleaks/gitleaks) is installed, it is used for scanning (~150 built-in rules). Otherwise, the script falls back to built-in `grep` patterns covering AWS keys, API keys (OpenAI, Anthropic, Stripe), GitHub tokens, SSH private keys, Slack tokens, and email addresses. The grep fallback is best-effort, not exhaustive — install gitleaks for comprehensive coverage.
+The scan runs two complementary checks:
+
+1. **[gitleaks](https://github.com/gitleaks/gitleaks)** (if installed) — ~150 built-in rules for context-aware detection (generic API keys, high-entropy strings, Slack tokens, private key files, etc.)
+2. **Built-in grep patterns** (always runs) — catches specific token formats that gitleaks misses in JSONL context: AWS keys (`AKIA`/`ASIA`), GitHub tokens (`ghp_`/`gho_`/`ghs_`/`github_pat_`), Anthropic keys (`sk-ant-`), OpenAI/Stripe keys (`sk-`), SSH private keys, Slack tokens, and email addresses.
+
+Neither check is exhaustive on its own — together they provide broad coverage. Install gitleaks for best results.
 
 - `--no-scan` — skip the scan entirely
-- `.cc-push-scanignore` — place in the project root with one pattern per line to suppress false positives in the grep fallback (matched via `grep -vF`). For gitleaks, use a `.gitleaks.toml` allowlist instead.
+- `.cc-push-scanignore` — place in the project root with one pattern per line to suppress grep false positives (matched via `grep -vF`). For gitleaks, use a `.gitleaks.toml` allowlist.
 
 ## Phase 1 Limitations
 
