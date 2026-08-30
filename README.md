@@ -118,16 +118,31 @@ Neither check is exhaustive on its own — together they provide broad coverage.
 - `--no-scan` — skip the scan entirely
 - `.cc-push-scanignore` — place in the project root with one pattern per line to suppress grep false positives (matched via `grep -vF`). For gitleaks, use a `.gitleaks.toml` allowlist.
 
+## Version Compatibility
+
+The JSONL session format can change between Claude Code versions. `cc-push.sh`
+records the source machine's Claude Code version in `metadata.json`, and
+`cc-pull.sh` warns when the local version differs:
+
+```
+[cc-pull] WARNING: Claude Code version mismatch — session format may be incompatible
+[cc-pull]   Source machine: 2.1.197 (Claude Code)
+[cc-pull]   This machine  : 2.1.251 (Claude Code)
+```
+
+The restore still proceeds — mismatches are usually fine across nearby versions.
+If `claude --continue` misbehaves after restore, install the source version:
+`sudo npm install -g @anthropic-ai/claude-code@<version>`.
+
 ## Phase 1 Limitations
 
-- Both machines must use **identical project paths** (e.g., `/home/ubuntu/project`)
-- No path rewriting — session JSONL references absolute paths
+- Both machines should use identical project paths (e.g., `/home/ubuntu/project`),
+  or pass `--rewrite-paths` to `cc-pull.sh` to rewrite absolute paths in session data
 - Last-push-wins — no locking or merge for concurrent edits
 - GitHub's 100MB file limit may block very large sessions (need Git LFS)
 
 ## Phase 2 (Future)
 
-- Path rewriting for different usernames/directories
 - Incremental sync (only new JSONL lines)
 - Git LFS for large sessions
 - Bidirectional merge

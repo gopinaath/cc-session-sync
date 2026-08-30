@@ -98,7 +98,11 @@ done
 log "Check 6: claude --continue loads and can respond"
 cd "${PROJECT_DIR}"
 
-CONTINUE_OUTPUT=$(claude --continue -p "What files have you created or modified in this session? Just list the filenames." \
+# Ask about a detail that exists ONLY in the conversation history: the
+# function name from the seed session's follow-up prompt. Machine B's fresh
+# clone of the project repo doesn't contain it, so answering correctly
+# proves the transcript was restored — not just that files are present.
+CONTINUE_OUTPUT=$(claude --continue -p "Earlier in this session I asked you to add a function to hello.py. What was that function called? Reply with only the function name." \
   --model "${ANTHROPIC_DEFAULT_SONNET_MODEL:-global.anthropic.claude-sonnet-4-5-20250929-v1:0}" \
   2>&1) || true
 
@@ -106,11 +110,10 @@ if [[ -n "${CONTINUE_OUTPUT}" ]]; then
   pass "claude --continue produced output"
   log "  Response preview: $(echo "${CONTINUE_OUTPUT}" | head -5)"
 
-  # Check if it references files from the seeded session
-  if echo "${CONTINUE_OUTPUT}" | grep -qi "hello\|NOTES\|\.py\|\.md"; then
-    pass "Response references files from the original session"
+  if echo "${CONTINUE_OUTPUT}" | grep -q "get_machine_info"; then
+    pass "Response recalls conversation history from the original machine"
   else
-    fail "Response does not reference expected files (hello.py, NOTES.md)"
+    fail "Response does not recall the seeded conversation (expected 'get_machine_info')"
     log "  Full output: ${CONTINUE_OUTPUT}"
   fi
 else

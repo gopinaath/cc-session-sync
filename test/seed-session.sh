@@ -39,8 +39,11 @@ log "Creating Claude Code session..."
 
 # Run a scripted prompt that creates a known file
 # Using --print (-p) for non-interactive execution
+# --permission-mode acceptEdits: in print mode file writes are otherwise
+# silently blocked pending approval, so the files would never be created
 claude -p "Create a file called hello.py that prints 'Hello from $(hostname)' and the current date. Also create a file called NOTES.md with a brief description of what hello.py does." \
   --model "${ANTHROPIC_DEFAULT_SONNET_MODEL:-global.anthropic.claude-sonnet-4-5-20250929-v1:0}" \
+  --permission-mode acceptEdits \
   2>&1 | tail -20
 
 log "First prompt complete."
@@ -48,6 +51,7 @@ log "First prompt complete."
 # Send a follow-up to build conversation history
 claude --continue -p "Now add a function called 'get_machine_info()' to hello.py that returns a dict with hostname, platform, and python version." \
   --model "${ANTHROPIC_DEFAULT_SONNET_MODEL:-global.anthropic.claude-sonnet-4-5-20250929-v1:0}" \
+  --permission-mode acceptEdits \
   2>&1 | tail -20
 
 log "Follow-up prompt complete."
@@ -89,6 +93,11 @@ if [[ ${JSONL_FILES} -gt 0 ]]; then
   LINE_COUNT=$(wc -l < "${FIRST_JSONL}")
   log "  Lines in latest session: ${LINE_COUNT}"
 fi
+
+# Verify Claude's writes actually landed (fail fast here rather than at
+# validation time on the other machine)
+[[ -f "${PROJECT_DIR}/NOTES.md" ]] || die "NOTES.md was not created — were file writes permission-blocked?"
+grep -q "get_machine_info" "${PROJECT_DIR}/hello.py" || die "hello.py does not contain get_machine_info() — were file writes permission-blocked?"
 
 # Show what files Claude created
 log ""

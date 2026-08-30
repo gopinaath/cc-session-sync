@@ -68,6 +68,24 @@ log "Session count  : ${SESSION_COUNT}"
 log "Pushed at      : ${PUSHED_AT}"
 log "Claude version : ${CLAUDE_VERSION}"
 
+# ---------- check Claude Code version match ----------
+# The JSONL session format can differ between Claude Code versions; restoring
+# state from a different version may fail or behave unexpectedly (issue #6).
+LOCAL_CLAUDE_VERSION="$(claude --version 2>/dev/null || echo 'unknown')"
+if [[ "${CLAUDE_VERSION}" == "unknown" || "${LOCAL_CLAUDE_VERSION}" == "unknown" ]]; then
+  log ""
+  log "WARNING: Cannot verify Claude Code version match"
+  log "  Source: ${CLAUDE_VERSION}"
+  log "  Local : ${LOCAL_CLAUDE_VERSION}"
+elif [[ "${CLAUDE_VERSION}" != "${LOCAL_CLAUDE_VERSION}" ]]; then
+  log ""
+  log "WARNING: Claude Code version mismatch — session format may be incompatible"
+  log "  Source machine: ${CLAUDE_VERSION}"
+  log "  This machine  : ${LOCAL_CLAUDE_VERSION}"
+  log "  If 'claude --continue' misbehaves after restore, install the source version:"
+  log "    sudo npm install -g @anthropic-ai/claude-code@<version>"
+fi
+
 # ---------- validate paths ----------
 if [[ "${PROJECT_DIR}" != "${SOURCE_PATH}" ]]; then
   if [[ "${REWRITE_PATHS}" == true ]]; then
