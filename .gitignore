@@ -11,3 +11,6 @@ Thumbs.db
 *.tmp
 *.bak
 staging/
+
+# e2e gate marker (machine-local)
+.claude/last-e2e-pass

@@ -54,6 +54,9 @@ cleanup() {
 
   echo ""
   if [[ ${FAILURES} -eq 0 && ${RC} -eq 0 ]]; then
+    # Record the pass for the git-push e2e gate (.claude/hooks/e2e-gate.sh)
+    mkdir -p "${PROJECT_ROOT}/.claude"
+    "${PROJECT_ROOT}/test/tree-hash.sh" > "${PROJECT_ROOT}/.claude/last-e2e-pass" || true
     echo "========================================="
     echo "  ALL TESTS PASSED"
     echo "========================================="
