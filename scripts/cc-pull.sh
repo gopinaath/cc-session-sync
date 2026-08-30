@@ -101,11 +101,15 @@ Paths must match, or use --rewrite-paths to rewrite session data.
 fi
 
 # ---------- validate session files exist in state repo ----------
+# sessions-index.json only exists for state pushed from older Claude Code
+# versions; newer versions (2.x) have no index. Validate it when present.
 SESSION_INDEX="${STATE_DIR}/projects/${ENCODED_PATH}/sessions-index.json"
-[[ -f "${SESSION_INDEX}" ]] || die "sessions-index.json not found in state repo at projects/${ENCODED_PATH}/"
-
-if ! jq -e . "${SESSION_INDEX}" > /dev/null 2>&1; then
-  die "sessions-index.json is not valid JSON"
+if [[ -f "${SESSION_INDEX}" ]]; then
+  if ! jq -e . "${SESSION_INDEX}" > /dev/null 2>&1; then
+    die "sessions-index.json is not valid JSON"
+  fi
+else
+  log "No sessions-index.json in state repo (new layout)"
 fi
 
 # Check that at least one JSONL file exists
@@ -238,19 +242,26 @@ fi
 
 # ---------- verify ----------
 RESTORED_INDEX="${CLAUDE_DIR}/projects/${RESTORE_ENCODED}/sessions-index.json"
-if [[ ! -f "${RESTORED_INDEX}" ]]; then
-  die "Verification failed: sessions-index.json not found after restore"
-fi
-
-if ! jq -e . "${RESTORED_INDEX}" > /dev/null 2>&1; then
-  die "Verification failed: sessions-index.json is not valid JSON after restore"
+INDEX_STATUS="absent (new layout)"
+if [[ -f "${SESSION_INDEX}" ]]; then
+  # Old layout: the index was in the state repo, so it must have been restored
+  if [[ ! -f "${RESTORED_INDEX}" ]]; then
+    die "Verification failed: sessions-index.json not found after restore"
+  fi
+  if ! jq -e . "${RESTORED_INDEX}" > /dev/null 2>&1; then
+    die "Verification failed: sessions-index.json is not valid JSON after restore"
+  fi
+  INDEX_STATUS="OK (valid JSON)"
 fi
 
 RESTORED_JSONL_COUNT=$(find "${CLAUDE_DIR}/projects/${RESTORE_ENCODED}" -name '*.jsonl' | wc -l)
+if [[ ${RESTORED_JSONL_COUNT} -eq 0 ]]; then
+  die "Verification failed: no session JSONL files after restore"
+fi
 
 log ""
 log "=== Verification ==="
-log "sessions-index.json : OK (valid JSON)"
+log "sessions-index.json : ${INDEX_STATUS}"
 log "JSONL files restored: ${RESTORED_JSONL_COUNT}"
 if [[ "${REWRITE_PATHS}" == true && "${PROJECT_DIR}" != "${SOURCE_PATH}" ]]; then
   log "Path rewrite       : ${SOURCE_PATH} → ${PROJECT_DIR}"

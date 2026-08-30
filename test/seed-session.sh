@@ -53,31 +53,41 @@ claude --continue -p "Now add a function called 'get_machine_info()' to hello.py
 log "Follow-up prompt complete."
 
 # ---------- verify session was created ----------
+# Claude Code encodes the project path with the leading dash kept
+# (e.g. /home/ubuntu/project → -home-ubuntu-project)
 PROJECT_DIR_ABS="$(cd "${PROJECT_DIR}" && pwd)"
 ENCODED_PATH="${PROJECT_DIR_ABS//\//-}"
-ENCODED_PATH="${ENCODED_PATH#-}"
 
 SESSION_DIR="${HOME}/.claude/projects/${ENCODED_PATH}"
 SESSION_INDEX="${SESSION_DIR}/sessions-index.json"
 
+[[ -d "${SESSION_DIR}" ]] || die "No session directory found at ${SESSION_DIR}"
+
+# sessions-index.json was removed in newer Claude Code versions; sessions are
+# just <session-id>.jsonl files. Support both layouts.
 if [[ -f "${SESSION_INDEX}" ]]; then
   SESSION_COUNT=$(jq 'length' "${SESSION_INDEX}")
   LATEST_SESSION=$(jq -r '.[-1].sessionId // .[-1].id // "unknown"' "${SESSION_INDEX}")
-  log "Session created successfully!"
-  log "  Sessions: ${SESSION_COUNT}"
-  log "  Latest:   ${LATEST_SESSION}"
-
-  # Check JSONL exists
-  JSONL_FILES=$(find "${SESSION_DIR}" -name '*.jsonl' | wc -l)
-  log "  JSONL files: ${JSONL_FILES}"
-
-  if [[ ${JSONL_FILES} -gt 0 ]]; then
-    FIRST_JSONL=$(find "${SESSION_DIR}" -name '*.jsonl' | head -1)
-    LINE_COUNT=$(wc -l < "${FIRST_JSONL}")
-    log "  Lines in latest session: ${LINE_COUNT}"
-  fi
+  log "Session index found (old layout)"
 else
-  die "No sessions-index.json found at ${SESSION_INDEX}"
+  SESSION_COUNT=$(find "${SESSION_DIR}" -maxdepth 1 -name '*.jsonl' | wc -l | tr -d ' ')
+  LATEST_JSONL=$(ls -t "${SESSION_DIR}"/*.jsonl 2>/dev/null | head -1 || true)
+  [[ -n "${LATEST_JSONL}" ]] || die "No session JSONL files found in ${SESSION_DIR}"
+  LATEST_SESSION="$(basename "${LATEST_JSONL}" .jsonl)"
+  log "No sessions-index.json (new layout) — using JSONL files directly"
+fi
+
+log "Session created successfully!"
+log "  Sessions: ${SESSION_COUNT}"
+log "  Latest:   ${LATEST_SESSION}"
+
+JSONL_FILES=$(find "${SESSION_DIR}" -name '*.jsonl' | wc -l)
+log "  JSONL files: ${JSONL_FILES}"
+
+if [[ ${JSONL_FILES} -gt 0 ]]; then
+  FIRST_JSONL=$(ls -t "${SESSION_DIR}"/*.jsonl | head -1)
+  LINE_COUNT=$(wc -l < "${FIRST_JSONL}")
+  log "  Lines in latest session: ${LINE_COUNT}"
 fi
 
 # Show what files Claude created

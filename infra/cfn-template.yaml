@@ -45,6 +45,13 @@ Resources:
                 Resource:
                   - 'arn:aws:bedrock:*::foundation-model/*'
                   - 'arn:aws:bedrock:*:*:inference-profile/*'
+              # First invocation of an Anthropic model in an account triggers an
+              # AWS Marketplace subscription; without these the invoke fails 403.
+              - Effect: Allow
+                Action:
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: '*'
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile

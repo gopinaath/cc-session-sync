@@ -40,6 +40,7 @@ scp_to_b() { scp ${SSH_OPTS} -i "${KEY_FILE}" "$1" "ubuntu@${IP_B}:$2"; }
 FAILURES=0
 
 cleanup() {
+  RC=$?   # non-zero when a step aborted via set -e
   log "CLEANUP"
   if [[ "${SKIP_TEARDOWN:-}" == "1" ]]; then
     echo "SKIP_TEARDOWN=1 — leaving stack '${STACK_NAME}' running."
@@ -52,10 +53,15 @@ cleanup() {
   fi
 
   echo ""
-  if [[ ${FAILURES} -eq 0 ]]; then
+  if [[ ${FAILURES} -eq 0 && ${RC} -eq 0 ]]; then
     echo "========================================="
     echo "  ALL TESTS PASSED"
     echo "========================================="
+  elif [[ ${RC} -ne 0 ]]; then
+    echo "========================================="
+    echo "  E2E ABORTED (a step exited with code ${RC})"
+    echo "========================================="
+    exit "${RC}"
   else
     echo "========================================="
     echo "  ${FAILURES} TEST(S) FAILED"
@@ -116,6 +122,18 @@ for ip in "${IP_A}" "${IP_B}"; do
 done
 
 # ===================================================
+# Step 2.5: Authenticate GitHub CLI on both machines
+# ===================================================
+log "STEP 2.5: Authenticate gh on both machines"
+step "Passing local gh token to instances (required to push/pull the private state repo)..."
+GH_TOKEN_VALUE="$(gh auth token)"
+for ip in "${IP_A}" "${IP_B}"; do
+  printf '%s' "${GH_TOKEN_VALUE}" | ssh ${SSH_OPTS} -i "${KEY_FILE}" "ubuntu@${ip}" \
+    "gh auth login --with-token && gh auth setup-git"
+  step "gh authenticated on ${ip}"
+done
+
+# ===================================================
 # Step 3: Install Claude Code on Machine A
 # ===================================================
 log "STEP 3: Install Claude Code on Machine A"
@@ -157,19 +175,15 @@ scp_to_b "${PROJECT_ROOT}/scripts/cc-pull.sh" "/tmp/cc-pull.sh"
 ssh_b "bash /tmp/cc-pull.sh ${REMOTE_PROJECT_DIR} '${STATE_REPO}'"
 
 # ===================================================
-# Step 9: Validate session on Machine B
+# Step 9: Compare session state
+# (before validation — validate-continue.sh runs `claude --continue`,
+#  which appends new lines to the session JSONL on Machine B)
 # ===================================================
-log "STEP 9: Validate session"
-scp_to_b "${SCRIPT_DIR}/validate-continue.sh" "/tmp/validate-continue.sh"
-ssh_b "bash /tmp/validate-continue.sh ${REMOTE_PROJECT_DIR}"
+log "STEP 9: Cross-machine comparison"
 
-# ===================================================
-# Step 10: Compare session state
-# ===================================================
-log "STEP 10: Cross-machine comparison"
-
-# Compare session JSONL line counts
-ENCODED="home-ubuntu-test-project"
+# Compare session JSONL line counts. Claude Code keeps the leading dash
+# in the encoded path: /home/ubuntu/test-project → -home-ubuntu-test-project
+ENCODED="-home-ubuntu-test-project"
 A_LINES=$(ssh_a "wc -l < \$(ls ~/.claude/projects/${ENCODED}/*.jsonl | head -1)" 2>/dev/null || echo "0")
 B_LINES=$(ssh_b "wc -l < \$(ls ~/.claude/projects/${ENCODED}/*.jsonl | head -1)" 2>/dev/null || echo "0")
 
@@ -181,5 +195,12 @@ if [[ "${A_LINES}" == "${B_LINES}" ]] && [[ "${A_LINES}" != "0" ]]; then
 else
   fail "Session JSONL line count mismatch: A=${A_LINES} B=${B_LINES}"
 fi
+
+# ===================================================
+# Step 10: Validate session on Machine B
+# ===================================================
+log "STEP 10: Validate session"
+scp_to_b "${SCRIPT_DIR}/validate-continue.sh" "/tmp/validate-continue.sh"
+ssh_b "bash /tmp/validate-continue.sh ${REMOTE_PROJECT_DIR}"
 
 log "E2E TEST COMPLETE"

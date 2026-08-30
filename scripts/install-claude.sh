@@ -45,7 +45,7 @@ fi
 
 # ---------- install Claude Code ----------
 log "Installing Claude Code..."
-npm install -g @anthropic-ai/claude-code
+sudo npm install -g @anthropic-ai/claude-code
 
 # ---------- verify installation ----------
 CLAUDE_VERSION="$(claude --version 2>/dev/null || echo 'FAILED')"
@@ -70,9 +70,12 @@ else
   log "  WARNING: AWS_REGION not set"
 fi
 
-# Quick check that instance profile is attached
-if curl -s --max-time 2 http://169.254.169.254/latest/meta-data/iam/security-credentials/ | grep -q .; then
-  ROLE="$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)"
+# Quick check that instance profile is attached (IMDSv2)
+IMDS_TOKEN="$(curl -s --max-time 2 -X PUT http://169.254.169.254/latest/api/token \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)"
+ROLE="$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" \
+  http://169.254.169.254/latest/meta-data/iam/security-credentials/ || true)"
+if [[ -n "${ROLE}" ]]; then
   log "  IAM role: ${ROLE} ✓"
 else
   log "  WARNING: No IAM instance profile detected"

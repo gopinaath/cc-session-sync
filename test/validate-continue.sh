@@ -23,28 +23,34 @@ fail() { echo "[validate] ✗ FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
 FAILURES=0
 
+# Claude Code encodes the project path with the leading dash kept
+# (e.g. /home/ubuntu/project → -home-ubuntu-project)
 PROJECT_DIR="$(cd "${PROJECT_DIR}" && pwd)"
 ENCODED_PATH="${PROJECT_DIR//\//-}"
-ENCODED_PATH="${ENCODED_PATH#-}"
 
 SESSION_DIR="${HOME}/.claude/projects/${ENCODED_PATH}"
 SESSION_INDEX="${SESSION_DIR}/sessions-index.json"
 
-# ---------- Check 1: sessions-index.json ----------
-log "Check 1: sessions-index.json exists"
-if [[ -f "${SESSION_INDEX}" ]]; then
-  pass "sessions-index.json exists"
+# ---------- Check 1: session directory ----------
+log "Check 1: session directory exists"
+if [[ -d "${SESSION_DIR}" ]]; then
+  pass "session directory exists: ${SESSION_DIR}"
 else
-  fail "sessions-index.json not found at ${SESSION_INDEX}"
+  fail "session directory not found at ${SESSION_DIR}"
 fi
 
-# ---------- Check 2: sessions-index.json is valid JSON ----------
-log "Check 2: sessions-index.json is valid JSON"
-if jq -e . "${SESSION_INDEX}" > /dev/null 2>&1; then
-  SESSION_COUNT=$(jq 'length' "${SESSION_INDEX}")
-  pass "sessions-index.json is valid JSON (${SESSION_COUNT} sessions)"
+# ---------- Check 2: sessions-index.json (old layout only) ----------
+# Newer Claude Code versions (2.x) don't write sessions-index.json
+log "Check 2: sessions-index.json (if present) is valid JSON"
+if [[ -f "${SESSION_INDEX}" ]]; then
+  if jq -e . "${SESSION_INDEX}" > /dev/null 2>&1; then
+    SESSION_COUNT=$(jq 'length' "${SESSION_INDEX}")
+    pass "sessions-index.json is valid JSON (${SESSION_COUNT} sessions)"
+  else
+    fail "sessions-index.json is not valid JSON"
+  fi
 else
-  fail "sessions-index.json is not valid JSON"
+  pass "no sessions-index.json (new layout) — skipping index checks"
 fi
 
 # ---------- Check 3: JSONL files exist ----------

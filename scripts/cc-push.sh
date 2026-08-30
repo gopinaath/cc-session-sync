@@ -42,15 +42,26 @@ ENCODED_PATH="${PROJECT_DIR//\//-}"
 SESSION_DIR="${CLAUDE_DIR}/projects/${ENCODED_PATH}"
 SESSION_INDEX="${SESSION_DIR}/sessions-index.json"
 
-[[ -f "${SESSION_INDEX}" ]] || die "No sessions-index.json found at ${SESSION_INDEX}"
+[[ -d "${SESSION_DIR}" ]] || die "No session directory found at ${SESSION_DIR}"
 
 log "Project directory : ${PROJECT_DIR}"
 log "Encoded path      : ${ENCODED_PATH}"
-log "Session index     : ${SESSION_INDEX}"
 
 # ---------- read session info ----------
-SESSION_COUNT=$(jq '.entries | length' "${SESSION_INDEX}")
-LATEST_SESSION=$(jq -r '.entries[-1].sessionId // empty' "${SESSION_INDEX}")
+# Older Claude Code versions kept a sessions-index.json; newer versions (2.x)
+# store sessions as bare <session-id>.jsonl files. Support both layouts.
+if [[ -f "${SESSION_INDEX}" ]]; then
+  log "Session index     : ${SESSION_INDEX}"
+  SESSION_COUNT=$(jq '.entries | length' "${SESSION_INDEX}")
+  LATEST_SESSION=$(jq -r '.entries[-1].sessionId // empty' "${SESSION_INDEX}")
+  SESSION_IDS=$(jq -r '.entries[].sessionId // empty' "${SESSION_INDEX}")
+else
+  log "Session index     : none (new layout — deriving sessions from JSONL files)"
+  SESSION_COUNT=$(find "${SESSION_DIR}" -maxdepth 1 -name '*.jsonl' | wc -l | tr -d ' ')
+  [[ "${SESSION_COUNT}" -gt 0 ]] || die "No session JSONL files found in ${SESSION_DIR}"
+  LATEST_SESSION="$(basename "$(ls -t "${SESSION_DIR}"/*.jsonl | head -1)" .jsonl)"
+  SESSION_IDS=$(find "${SESSION_DIR}" -maxdepth 1 -name '*.jsonl' -exec basename {} .jsonl \;)
+fi
 log "Sessions found    : ${SESSION_COUNT}"
 log "Latest session ID : ${LATEST_SESSION}"
 
@@ -60,12 +71,12 @@ trap 'rm -rf "${STAGING}"' EXIT
 
 log "Staging to: ${STAGING}"
 
-# 1. projects/<encoded-path>/ — session index + JSONL files + subdirectories
+# 1. projects/<encoded-path>/ — session index (if present) + JSONL files + subdirectories
 STAGE_PROJ="${STAGING}/projects/${ENCODED_PATH}"
 mkdir -p "${STAGE_PROJ}"
 
-# Copy sessions-index.json
-cp "${SESSION_INDEX}" "${STAGE_PROJ}/"
+# Copy sessions-index.json (old layout only)
+[[ -f "${SESSION_INDEX}" ]] && cp "${SESSION_INDEX}" "${STAGE_PROJ}/"
 
 # Copy all session JSONL files
 for jsonl in "${SESSION_DIR}"/*.jsonl; do
@@ -103,8 +114,9 @@ done
 for top_dir in file-history tasks todos; do
   SRC="${CLAUDE_DIR}/${top_dir}"
   [[ -d "${SRC}" ]] || continue
-  # Copy directories that match any session ID in our index
-  jq -r '.entries[].sessionId // empty' "${SESSION_INDEX}" | while read -r sid; do
+  # Copy directories that match any known session ID
+  echo "${SESSION_IDS}" | while read -r sid; do
+    [[ -n "${sid}" ]] || continue
     if [[ -d "${SRC}/${sid}" ]]; then
       mkdir -p "${STAGING}/${top_dir}"
       cp -r "${SRC}/${sid}" "${STAGING}/${top_dir}/${sid}"
@@ -248,6 +260,11 @@ find "${REPO_TMP}/state" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} 
 cp -r "${STAGING}"/* "${REPO_TMP}/state/"
 
 cd "${REPO_TMP}/state"
+
+# Fresh machines may have no global git identity — set one locally for this commit
+git config user.email "cc-push@$(hostname)"
+git config user.name "cc-push"
+
 git add -A
 
 if git diff --cached --quiet; then
