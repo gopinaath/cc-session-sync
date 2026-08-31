@@ -42,6 +42,11 @@ Clone the project repo first, then run cc-pull.sh."
 
 PROJECT_DIR="$(cd "${PROJECT_DIR}" && pwd)"
 
+# Everything below uses absolute paths. Leave the caller's cwd — when invoked
+# as a different user (e.g. sudo -u alice from ubuntu's home), find(1) fails
+# with "Failed to restore initial working directory" on an unreadable cwd.
+cd /
+
 # ---------- clone state repo ----------
 REPO_TMP="$(mktemp -d)"
 trap 'rm -rf "${REPO_TMP}"' EXIT
@@ -95,13 +100,19 @@ if [[ "${PROJECT_DIR}" != "${SOURCE_PATH}" ]]; then
     log "  Target: ${PROJECT_DIR}"
 
     # Compute source home dir from fullPath in sessions-index.json
+    # (old layout only — Claude Code 2.x has no index, and a failing jq under
+    # `set -euo pipefail` must not abort the pull)
     # fullPath looks like: /home/alice/.claude/projects/...
-    SRC_CLAUDE_HOME=$(jq -r '.entries[0].fullPath // empty' \
-      "${STATE_DIR}/projects/${ENCODED_PATH}/sessions-index.json" 2>/dev/null \
-      | sed 's|/.claude/.*||')
+    SRC_CLAUDE_HOME=""
+    SRC_INDEX="${STATE_DIR}/projects/${ENCODED_PATH}/sessions-index.json"
+    if [[ -f "${SRC_INDEX}" ]]; then
+      SRC_CLAUDE_HOME=$(jq -r '.entries[0].fullPath // empty' "${SRC_INDEX}" 2>/dev/null \
+        | sed 's|/.claude/.*||' || true)
+    fi
     if [[ -z "${SRC_CLAUDE_HOME}" ]]; then
-      # Fallback: infer from source_path (take first two path components for /home/user)
-      SRC_CLAUDE_HOME=$(echo "${SOURCE_PATH}" | grep -oP '^/home/[^/]+')
+      # Fallback: infer the home dir prefix from source_path
+      # (-E not -P: works with both GNU and BSD grep; /Users covers macOS)
+      SRC_CLAUDE_HOME=$(echo "${SOURCE_PATH}" | grep -oE '^/(home|Users)/[^/]+' || true)
     fi
 
     DST_ENCODED="${PROJECT_DIR//\//-}"

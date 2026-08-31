@@ -206,4 +206,33 @@ log "STEP 10: Validate session"
 scp_to_b "${SCRIPT_DIR}/validate-continue.sh" "/tmp/validate-continue.sh"
 ssh_b "bash /tmp/validate-continue.sh ${REMOTE_PROJECT_DIR}"
 
+# ===================================================
+# Step 11: Username-change restore on Machine B (issue #1)
+# Restore the same pushed state for a DIFFERENT user (alice) with
+# --rewrite-paths, then validate the rewrite and conversation continuity.
+# ===================================================
+log "STEP 11: Username-change restore (ubuntu → alice) on Machine B"
+ALICE_PROJECT_DIR="/home/alice/test-project"
+
+step "Creating user 'alice'..."
+ssh_b "sudo useradd -m -s /bin/bash alice 2>/dev/null || sudo test -d /home/alice"
+
+step "Authenticating gh for alice (needed for the private state repo)..."
+printf '%s' "${GH_TOKEN_VALUE}" | ssh_b "sudo -u alice -H bash -c 'gh auth login --with-token && gh auth setup-git'"
+
+step "Cloning project repo as alice..."
+ssh_b "sudo -u alice -H git clone '${PROJECT_REPO}' '${ALICE_PROJECT_DIR}'"
+
+# cd /tmp first: sudo keeps the caller's cwd (ubuntu's 750 home), which
+# alice can't read — find(1) inside the scripts fails on an unreadable cwd
+step "Pulling session state as alice with --rewrite-paths..."
+ssh_b "cd /tmp && sudo -u alice -H bash /tmp/cc-pull.sh --rewrite-paths ${ALICE_PROJECT_DIR} '${STATE_REPO}'"
+
+step "Validating rewritten session data (before anything mutates it)..."
+scp_to_b "${SCRIPT_DIR}/validate-username-change.sh" "/tmp/validate-username-change.sh"
+ssh_b "cd /tmp && sudo -u alice -H bash /tmp/validate-username-change.sh ${ALICE_PROJECT_DIR} ${REMOTE_PROJECT_DIR}"
+
+step "Validating claude --continue as alice..."
+ssh_b "cd /tmp && sudo -u alice -H bash /tmp/validate-continue.sh ${ALICE_PROJECT_DIR}"
+
 log "E2E TEST COMPLETE"
